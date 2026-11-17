@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capi-autoscaler-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capi-autoscaler
+  namespace: capi-autoscaler-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: capi-autoscaler
+rules:
+  - apiGroups: ["wikoion.dev"]
+    resources: ["autoscales", "autoscales/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources:
+      - clusters
+      - machinedeployments
+      - machinesets
+      - machines
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources:
+      - machinedeployments/scale
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: capi-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: capi-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: capi-autoscaler
+    namespace: capi-autoscaler-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capi-autoscaler
+  namespace: capi-autoscaler-system
+  labels:
+    app: capi-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capi-autoscaler
+  template:
+    metadata:
+      labels:
+        app: capi-autoscaler
+    spec:
+      serviceAccountName: capi-autoscaler
+      containers:
+        - name: controller
+          image: capi-autoscaler:bench
+          imagePullPolicy: Never
+          env:
+            - name: REMOTE_CONFIG_PATH
+              value: /etc/workload-kubeconfig/value
+            - name: CLUSTER_ID
+              value: bench-cluster
+            - name: NAMESPACE
+              value: default
+            - name: RUST_LOG
+              value: "info,capi_autoscaler=debug"
+          volumeMounts:
+            - name: workload-kubeconfig
+              mountPath: /etc/workload-kubeconfig
+              readOnly: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              # CP-SAT is multi-threaded and memory-hungry on large models
+              # (100+ pods x 100+ slots); undersizing OOM-kills mid-solve.
+              # num_workers is set from this quota via available_parallelism.
+              cpu: "8"
+              memory: 4Gi
+      volumes:
+        - name: workload-kubeconfig
+          secret:
+            secretName: bench-cluster-kubeconfig

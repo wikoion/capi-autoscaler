@@ -1,0 +1,13 @@
+# r5.2xlarge is billed at a discounted benchmark rate; tell Karpenter the same price
+# the harness and the capi-autoscaler MD annotation use (see config.py).
+# Requires the nodeOverlay feature gate (alpha, enabled in create-eks-cluster.sh).
+apiVersion: karpenter.sh/v1alpha1
+kind: NodeOverlay
+metadata:
+  name: r5-2xlarge-reserved
+spec:
+  requirements:
+    - key: node.kubernetes.io/instance-type
+      operator: In
+      values: ["r5.2xlarge"]
+  price: "0.277"

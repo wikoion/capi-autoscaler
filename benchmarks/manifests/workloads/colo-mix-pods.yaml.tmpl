@@ -1,0 +1,174 @@
+# colo-mix: three-tier stack plus a one-per-node db, no pins, no zone terms.
+# Aggregate demand is memory-shaped at ~8.5 GiB/core so $/GiB decides the
+# packing; the reserved-priced r5.2xlarge pool is the prize. db's hostname
+# anti-affinity costs the solver nothing (one db per node it already wants)
+# but fragments greedy first-fit bin-growing into overfilled big nodes and
+# stranded singleton nodes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-colo-web-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: colo-mix
+    bench-component: web
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ web_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: colo-mix
+      bench-component: web
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: colo-mix
+        bench-component: web
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+---
+# CPU complement: soaks up the cpu that cache leaves idle on memory nodes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-colo-api-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: colo-mix
+    bench-component: api
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ api_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: colo-mix
+      bench-component: api
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: colo-mix
+        bench-component: api
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1
+              memory: 4Gi
+            limits:
+              cpu: 1
+              memory: 4Gi
+---
+# Memory anchor at the r5 ratio (16 GiB/core): makes $/GiB the deciding metric
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-colo-cache-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: colo-mix
+    bench-component: cache
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ cache_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: colo-mix
+      bench-component: cache
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: colo-mix
+        bench-component: cache
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 8Gi
+            limits:
+              cpu: 500m
+              memory: 8Gi
+---
+# One per node: node-count floor at zero marginal cost for the solver.
+# 2 cpu / 16Gi deliberately doesn't fit any 2-vCPU instance, so a stranded
+# db can't hide on a cheap small node.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-colo-db-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: colo-mix
+    bench-component: db
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ db_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: colo-mix
+      bench-component: db
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: colo-mix
+        bench-component: db
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  bench-component: db
+                  bench-run: "{{ run_id }}"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 2
+              memory: 16Gi
+            limits:
+              cpu: 2
+              memory: 16Gi

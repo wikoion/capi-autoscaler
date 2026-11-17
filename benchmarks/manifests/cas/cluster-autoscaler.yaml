@@ -1,0 +1,129 @@
+# Cluster Autoscaler with CAPI cloud provider for benchmarking
+# Runs on the management cluster, scales MachineDeployments for the workload cluster
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-autoscaler
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-autoscaler
+rules:
+  # Core autoscaler permissions
+  - apiGroups: [""]
+    resources: ["events", "endpoints"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["watch", "list", "get", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "replicasets", "statefulsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["watch", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csinodes", "csidrivers", "csistoragecapacities"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+  # CAPI provider permissions
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources: ["machinedeployments", "machinedeployments/scale", "machines", "machinesets", "machinepools"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["infrastructure.cluster.x-k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: default
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+    spec:
+      serviceAccountName: cluster-autoscaler
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.35.2
+          command:
+            - /cluster-autoscaler
+          args:
+            - --cloud-provider=clusterapi
+            - --node-group-auto-discovery=clusterapi:namespace=default,clusterName=bench-cluster
+            - --kubeconfig=/etc/workload-kubeconfig/kubeconfig
+            - --clusterapi-cloud-config-authoritative
+            - --skip-nodes-with-local-storage=false
+            - --expander=least-waste
+            - --scale-down-enabled=false
+            # Single replica; leader election only adds a fatal "lost master"
+            # exit when the workload apiserver throttles lease renewal
+            - --leader-elect=false
+            # Default qps=5 throttles the clusterapi provider's per-loop
+            # discovery calls, stretching loops to minutes and causing timeouts
+            - --kube-client-qps=50
+            - --kube-client-burst=100
+            - --v=2
+          volumeMounts:
+            - name: workload-kubeconfig
+              mountPath: /etc/workload-kubeconfig
+              readOnly: true
+          resources:
+            # Matched to capi-autoscaler's quota so neither is CPU-starved
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "8"
+              memory: 4Gi
+      volumes:
+        - name: workload-kubeconfig
+          secret:
+            secretName: bench-cluster-kubeconfig
+            items:
+              - key: value
+                path: kubeconfig

@@ -1,0 +1,18 @@
+# Autoscale CRD tuned for fast benchmarking
+apiVersion: wikoion.dev/v1alpha1
+kind: Autoscale
+metadata:
+  name: bench-cluster-autoscale
+  namespace: default
+  labels:
+    wikoion.dev/cluster-id: bench-cluster
+spec:
+  scanInterval: 10s
+  podScaleUpDelay: 5s
+  # High enough that a large prod-mix scale-up lands in one batch; CAS and
+  # Karpenter are not batch-limited, so batching would skew the comparison.
+  maxScaleOut: 40
+  scalingTimeout: 10m
+  # Ample once num_workers matches the cpu quota; 60s only stretched Feasible stops
+  solverTimeout: 30s
+  unreadyNodeLimit: 5

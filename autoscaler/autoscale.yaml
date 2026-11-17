@@ -1,0 +1,14 @@
+apiVersion: wikoion.dev/v1alpha1
+kind: Autoscale
+metadata:
+  name: test-autoscale
+  namespace: bar
+  labels:
+    wikoion.dev/cluster-id: foo
+spec:
+  scanInterval: 30s
+  podScaleUpDelay: 30s
+  maxScaleOut: 5
+  scalingTimeout: 10m
+  solverTimeout: 60s
+  unreadyNodeLimit: 3

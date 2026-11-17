@@ -1,0 +1,40 @@
+# Gate pods labelled wikoion.dev/placement=managed so the controller can set
+# status.nominatedNodeName before the scheduler runs, then remove the gate.
+# Beta API: needs the MutatingAdmissionPolicy feature gate
+# and admissionregistration.k8s.io/v1beta1 runtime-config on the apiserver
+# (set in the cluster manifests); GA at v1 from 1.36.
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: capi-autoscaler-placement-gate
+spec:
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        wikoion.dev/placement: managed
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: not-pre-bound
+      expression: "!has(object.spec.nodeName)"
+  failurePolicy: Ignore
+  reinvocationPolicy: Never
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            spec: Object.spec{
+              schedulingGates: [Object.spec.schedulingGates{name: "wikoion.dev/placement"}]
+            }
+          }
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: capi-autoscaler-placement-gate
+spec:
+  policyName: capi-autoscaler-placement-gate

@@ -1,0 +1,14 @@
+apiVersion: wikoion.dev/v1alpha1
+kind: Autoscale
+metadata:
+  name: test-cluster-autoscale
+  namespace: default
+  labels:
+    wikoion.dev/cluster-id: test-cluster
+spec:
+  scanInterval: 30s
+  podScaleUpDelay: 30s
+  maxScaleOut: 5
+  scalingTimeout: 10m
+  solverTimeout: 60s
+  unreadyNodeLimit: 3

@@ -1,0 +1,119 @@
+# Mixed workload pods: 40% small, 35% medium, 25% large
+# Rendered by Jinja2 with: total_replicas, run_id
+# Replica counts are computed by the harness from total_replicas
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-mixed-small-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: mixed
+    bench-component: small
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ small_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: mixed
+      bench-component: small
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: mixed
+        bench-component: small
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-mixed-medium-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: mixed
+    bench-component: medium
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ medium_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: mixed
+      bench-component: medium
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: mixed
+        bench-component: medium
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-mixed-large-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: mixed
+    bench-component: large
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ large_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: mixed
+      bench-component: large
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: mixed
+        bench-component: large
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi

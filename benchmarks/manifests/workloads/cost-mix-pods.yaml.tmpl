@@ -1,0 +1,158 @@
+# Cost benchmark: unconstrained memory-leaning mix whose true-cost-optimal
+# fleet is the reserved-priced r5.2xlarge pool. Discriminates autoscalers that
+# chase real prices (cost annotations) from ones limited to public on-demand.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-cmix-web-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: cost-mix
+    bench-component: web
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ web_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: cost-mix
+      bench-component: web
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: cost-mix
+        bench-component: web
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-cmix-worker-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: cost-mix
+    bench-component: worker
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ worker_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: cost-mix
+      bench-component: worker
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: cost-mix
+        bench-component: worker
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1
+              memory: 4Gi
+            limits:
+              cpu: 1
+              memory: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-cmix-cache-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: cost-mix
+    bench-component: cache
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ cache_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: cost-mix
+      bench-component: cache
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: cost-mix
+        bench-component: cache
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 8Gi
+            limits:
+              cpu: 500m
+              memory: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-cmix-batch-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: cost-mix
+    bench-component: batch
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ batch_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: cost-mix
+      bench-component: batch
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: cost-mix
+        bench-component: batch
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 2
+              memory: 2Gi
+            limits:
+              cpu: 2
+              memory: 2Gi

@@ -1,0 +1,31 @@
+# Demo workload for triggering autoscaler scale-up.
+#
+# Each pod requests 3 CPU / 4Gi memory. With 10 replicas against a single
+# small worker node (2 CPU / 4Gi), ~5 pods will be unschedulable, triggering
+# the autoscaler to provision additional nodes via Cluster API.
+#
+# Usage:
+#   kubectl --kubeconfig /tmp/test-cluster-kubeconfig apply -f benchmarks/manifests/demo-workload.yaml
+#   kubectl --kubeconfig /tmp/test-cluster-kubeconfig get pods -w
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-workload
+  namespace: default
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: demo-workload
+  template:
+    metadata:
+      labels:
+        app: demo-workload
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10
+        resources:
+          requests:
+            cpu: "3"
+            memory: "4Gi"

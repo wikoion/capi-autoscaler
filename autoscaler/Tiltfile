@@ -1,0 +1,190 @@
+# Tiltfile for capi-autoscaler development
+
+# Configuration
+config.define_string("cluster-name")
+config.define_string("namespace")
+cfg = config.parse()
+
+CLUSTER_NAME = cfg.get("cluster-name", "test-cluster")
+NAMESPACE = cfg.get("namespace", "default")
+
+# Build the Rust binary locally
+local_resource(
+    "autoscaler-build",
+    cmd="cargo build --release",
+    deps=["src", "Cargo.toml", "Cargo.lock", "../optimiser"],
+    labels=["build"],
+)
+
+# Build Docker image
+docker_build(
+    "capi-autoscaler",
+    context=".",
+    dockerfile="Dockerfile",
+    only=["target/release/capi-autoscaler"],
+    live_update=[
+        sync("target/release/capi-autoscaler", "/capi-autoscaler"),
+    ],
+)
+
+# Deploy the autoscaler
+# Tilt will wait for resource_deps (kubeconfig secret + build) before deploying
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capi-autoscaler-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capi-autoscaler
+  namespace: capi-autoscaler-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: capi-autoscaler
+rules:
+- apiGroups: ["cluster.x-k8s.io"]
+  resources: ["clusters", "machines", "machinesets", "machinedeployments"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["infrastructure.cluster.x-k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["wikoion.dev"]
+  resources: ["autoscales", "autoscales/status"]
+  verbs: ["get", "list", "watch", "update", "patch", "create"]
+- apiGroups: [""]
+  resources: ["nodes", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: capi-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: capi-autoscaler
+subjects:
+- kind: ServiceAccount
+  name: capi-autoscaler
+  namespace: capi-autoscaler-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capi-autoscaler
+  namespace: capi-autoscaler-system
+  labels:
+    app: capi-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capi-autoscaler
+  template:
+    metadata:
+      labels:
+        app: capi-autoscaler
+    spec:
+      serviceAccountName: capi-autoscaler
+      containers:
+      - name: autoscaler
+        image: capi-autoscaler
+        env:
+        - name: CLUSTER_ID
+          value: "{cluster_name}"
+        - name: NAMESPACE
+          value: "{namespace}"
+        - name: REMOTE_CONFIG_PATH
+          value: "/etc/workload-kubeconfig/value"
+        - name: RUST_LOG
+          value: "info,capi_autoscaler=debug"
+        volumeMounts:
+        - name: workload-kubeconfig
+          mountPath: /etc/workload-kubeconfig
+          readOnly: true
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: workload-kubeconfig
+        secret:
+          secretName: {cluster_name}-kubeconfig
+""".format(cluster_name=CLUSTER_NAME, namespace=NAMESPACE)))
+
+# Install CRD and apply test cluster manifests
+local_resource(
+    "test-cluster-manifests",
+    cmd=" && ".join([
+        "cargo run --bin crdgen 2>/dev/null | kubectl apply -f -",
+        "kubectl apply -f manifests/test-cluster.yaml",
+        "kubectl apply -f manifests/autoscale.yaml",
+    ]),
+    deps=["manifests/test-cluster.yaml", "manifests/autoscale.yaml", "src/api/autoscale_types.rs"],
+    labels=["test-resources"],
+)
+
+# Wait for the kubeconfig secret to exist, then copy it to the autoscaler namespace
+local_resource(
+    "wait-for-kubeconfig",
+    cmd=" && ".join([
+        "echo 'Waiting for {cluster_name}-kubeconfig secret...'".format(cluster_name=CLUSTER_NAME),
+        "kubectl wait --for=create secret/{cluster_name}-kubeconfig -n {namespace} --timeout=600s".format(
+            cluster_name=CLUSTER_NAME,
+            namespace=NAMESPACE,
+        ),
+        "echo 'Secret found! Ensuring capi-autoscaler-system namespace exists...'",
+        "kubectl create namespace capi-autoscaler-system --dry-run=client -o yaml | kubectl apply -f -",
+        "echo 'Copying to capi-autoscaler-system namespace...'",
+        "kubectl get secret {cluster_name}-kubeconfig -n {namespace} -o json | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.ownerReferences)' | kubectl apply -n capi-autoscaler-system -f -".format(
+            cluster_name=CLUSTER_NAME,
+            namespace=NAMESPACE,
+        ),
+        "echo 'Done!'",
+    ]),
+    resource_deps=["test-cluster-manifests"],
+    labels=["test-resources"],
+)
+
+# Install CNI (kindnet) on the workload cluster so nodes become Ready
+local_resource(
+    "install-cni",
+    cmd=" && ".join([
+        "echo 'Extracting workload cluster kubeconfig...'",
+        "kubectl get secret {cluster_name}-kubeconfig -n {namespace} -o jsonpath='{{.data.value}}' | base64 -d > /tmp/{cluster_name}-kubeconfig".format(
+            cluster_name=CLUSTER_NAME,
+            namespace=NAMESPACE,
+        ),
+        "echo 'Waiting for workload cluster API server...'",
+        "until kubectl --kubeconfig /tmp/{cluster_name}-kubeconfig get nodes >/dev/null 2>&1; do echo '  API server not ready, retrying in 5s...'; sleep 5; done".format(
+            cluster_name=CLUSTER_NAME,
+        ),
+        "echo 'Installing kindnet CNI on workload cluster...'",
+        "kubectl --kubeconfig /tmp/{cluster_name}-kubeconfig apply -f https://raw.githubusercontent.com/aojea/kindnet/main/install-kindnet.yaml".format(
+            cluster_name=CLUSTER_NAME,
+        ),
+        "echo 'Waiting for nodes to become Ready...'",
+        "kubectl --kubeconfig /tmp/{cluster_name}-kubeconfig wait --for=condition=Ready nodes --all --timeout=300s".format(
+            cluster_name=CLUSTER_NAME,
+        ),
+        "echo 'CNI installed! All nodes Ready.'",
+    ]),
+    resource_deps=["wait-for-kubeconfig"],
+    labels=["test-resources"],
+)
+
+k8s_resource(
+    "capi-autoscaler",
+    labels=["autoscaler"],
+    resource_deps=["install-cni", "autoscaler-build"],
+)

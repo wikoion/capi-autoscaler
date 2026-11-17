@@ -1,0 +1,225 @@
+# Topology benchmark: zone + hostname spread constraints plus node affinity.
+# Spread components are pinned to the zoned m6i.large pools so the tainted
+# control-plane node never counts as an empty domain (would wedge DoNotSchedule).
+# No podAntiAffinity yet - add once the controller translates it (ticket 4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-topo-zonespread-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: zonespread
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ zonespread_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: zonespread
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: zonespread
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: benchmark-workload
+              bench-profile: {{ profile }}
+              bench-component: zonespread
+              bench-run: "{{ run_id }}"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# One pod per node (hostname spread, maxSkew 1): the closest stand-in for
+# hostname anti-affinity until ticket 4 lands, and a strong scale-out driver.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-topo-hostspread-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: hostspread
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ hostspread_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: hostspread
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: hostspread
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: benchmark-workload
+              bench-profile: {{ profile }}
+              bench-component: hostspread
+              bench-run: "{{ run_id }}"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Node-affinity-only service, same shape as prod-mix's: compute-optimised
+# (but not the 4xl) OR a mid-tier memory-optimised node. Keeps the plain
+# allowed-matrix path exercised alongside the spread constraints.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-topo-affinity-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: affinity
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ affinity_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: affinity
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: affinity
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - c5.xlarge
+                      - c5.2xlarge
+                      - c5.4xlarge
+                  - key: node.kubernetes.io/instance-type
+                    operator: NotIn
+                    values:
+                      - c5.4xlarge
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - r5.xlarge
+                      - r5.2xlarge
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1200m
+              memory: 2Gi
+            limits:
+              cpu: 1200m
+              memory: 2Gi
+---
+# Unconstrained background load so the bin-packer still has ordinary work
+# competing with the constrained components.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-topo-filler-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: filler
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ filler_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: filler
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: filler
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

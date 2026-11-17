@@ -1,0 +1,6 @@
+[env]
+ORTOOLS_PREFIX = "/opt/or-tools/current"
+LD_LIBRARY_PATH = "/opt/or-tools/current/lib"
+
+[build]
+rustflags = ["-L", "/opt/or-tools/current/lib", "-l", "protobuf", "-C", "link-arg=-Wl,-rpath,/opt/or-tools/current/lib"]

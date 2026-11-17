@@ -1,0 +1,293 @@
+# Test cluster for autoscaler development using CAPD (Docker provider)
+# This creates a workload cluster running as Docker containers
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: test-cluster
+  namespace: default
+  labels:
+    cluster-name: test-cluster
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+    services:
+      cidrBlocks:
+        - 10.128.0.0/12
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+    kind: KubeadmControlPlane
+    name: test-cluster-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: DockerCluster
+    name: test-cluster
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerCluster
+metadata:
+  name: test-cluster
+  namespace: default
+spec: {}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: KubeadmControlPlane
+metadata:
+  name: test-cluster-control-plane
+  namespace: default
+spec:
+  replicas: 1
+  version: v1.35.8
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: DockerMachineTemplate
+      name: test-cluster-control-plane
+  kubeadmConfigSpec:
+    files:
+      # MostAllocated scoring: pack pods onto loaded nodes so empty large nodes
+      # stay free for constrained pods, matching the solver's bin-packing plans.
+      - path: /etc/kubernetes/scheduler-config.yaml
+        owner: root:root
+        permissions: "0644"
+        content: |
+          apiVersion: kubescheduler.config.k8s.io/v1
+          kind: KubeSchedulerConfiguration
+          clientConnection:
+            kubeconfig: /etc/kubernetes/scheduler.conf
+          profiles:
+            - schedulerName: default-scheduler
+              pluginConfig:
+                - name: NodeResourcesFit
+                  args:
+                    scoringStrategy:
+                      type: MostAllocated
+                      resources:
+                        - name: cpu
+                          weight: 1
+                        - name: memory
+                          weight: 1
+    clusterConfiguration:
+      apiServer:
+        extraArgs:
+          # MutatingAdmissionPolicy is beta in 1.35, off by default
+          feature-gates: MutatingAdmissionPolicy=true
+          runtime-config: admissionregistration.k8s.io/v1beta1=true
+      controllerManager:
+        extraArgs:
+          enable-hostpath-provisioner: "true"
+      scheduler:
+        extraArgs:
+          config: /etc/kubernetes/scheduler-config.yaml
+        extraVolumes:
+          - name: scheduler-config
+            hostPath: /etc/kubernetes/scheduler-config.yaml
+            mountPath: /etc/kubernetes/scheduler-config.yaml
+            readOnly: true
+            pathType: File
+    initConfiguration:
+      nodeRegistration:
+        criSocket: unix:///var/run/containerd/containerd.sock
+        kubeletExtraArgs:
+          eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+    joinConfiguration:
+      nodeRegistration:
+        criSocket: unix:///var/run/containerd/containerd.sock
+        kubeletExtraArgs:
+          eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerMachineTemplate
+metadata:
+  name: test-cluster-control-plane
+  namespace: default
+spec:
+  template:
+    spec: {}
+---
+# Worker pool "small" - simulates small instance type
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: test-cluster-workers-small
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "5"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "4Gi"
+  labels:
+    cluster.x-k8s.io/cluster-name: test-cluster
+    wikoion.dev/cluster-id: test-cluster
+    node-pool: small
+spec:
+  clusterName: test-cluster
+  replicas: 1
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: test-cluster
+      version: v1.35.8
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: test-cluster-workers
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: test-cluster-workers-small
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerMachineTemplate
+metadata:
+  name: test-cluster-workers-small
+  namespace: default
+  labels:
+    node-pool: small
+  annotations:
+    # Simulated capacity for autoscaler testing
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "4Gi"
+spec:
+  template:
+    spec:
+      customImage: kindest/node:v1.35.8
+---
+# Worker pool "medium" - simulates medium instance type
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: test-cluster-workers-medium
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "5"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+  labels:
+    cluster.x-k8s.io/cluster-name: test-cluster
+    wikoion.dev/cluster-id: test-cluster
+    node-pool: medium
+spec:
+  clusterName: test-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: test-cluster
+      version: v1.35.8
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: test-cluster-workers
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: test-cluster-workers-medium
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerMachineTemplate
+metadata:
+  name: test-cluster-workers-medium
+  namespace: default
+  labels:
+    node-pool: medium
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+spec:
+  template:
+    spec:
+      customImage: kindest/node:v1.35.8
+---
+# Worker pool "large" - simulates large instance type
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: test-cluster-workers-large
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "3"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+  labels:
+    cluster.x-k8s.io/cluster-name: test-cluster
+    wikoion.dev/cluster-id: test-cluster
+    node-pool: large
+spec:
+  clusterName: test-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: test-cluster
+      version: v1.35.8
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: test-cluster-workers
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: test-cluster-workers-large
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerMachineTemplate
+metadata:
+  name: test-cluster-workers-large
+  namespace: default
+  labels:
+    node-pool: large
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+spec:
+  template:
+    spec:
+      customImage: kindest/node:v1.35.8
+---
+# Shared bootstrap config for all workers
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: test-cluster-workers
+  namespace: default
+spec:
+  template:
+    spec:
+      joinConfiguration:
+        nodeRegistration:
+          criSocket: unix:///var/run/containerd/containerd.sock
+          kubeletExtraArgs:
+            eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+---
+# Remediate machines that never become nodes; see bench manifest for rationale.
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: test-cluster-workers-mhc
+  namespace: default
+spec:
+  clusterName: test-cluster
+  selector:
+    matchExpressions:
+      - key: cluster.x-k8s.io/control-plane
+        operator: DoesNotExist
+  maxUnhealthy: 100%
+  nodeStartupTimeout: 8m
+  unhealthyConditions:
+    - type: Ready
+      status: "False"
+      timeout: 5m
+    - type: Ready
+      status: Unknown
+      timeout: 5m

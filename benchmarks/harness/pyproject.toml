@@ -1,0 +1,18 @@
+[project]
+name = "capi-autoscaler-benchmark"
+version = "0.1.0"
+description = "Benchmark harness for comparing CAPI autoscaler, CAS, and Karpenter"
+requires-python = ">=3.11"
+dependencies = [
+    "kubernetes>=31.0.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "click>=8.1",
+]
+
+[project.scripts]
+benchmark = "benchmark.cli:main"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"

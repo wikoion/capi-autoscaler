@@ -1,0 +1,489 @@
+# Inter-pod affinity benchmark: rendered as "heavy-constrained" (affinity
+# terms on) or "unconstrained" (identical shapes and node pins, no inter-pod
+# terms), so the delta between the two profiles is the cost of rule handling.
+# All terms are required-only: the optimiser only models hard rules. Hostname
+# keyed terms exercise what the controller translates today; zone keyed terms
+# exercise the optimiser's AffinityGroup path (controller support to follow).
+# Zone-keyed components pin to the zoned m6i.large pools so zone domains are
+# well defined and the tainted control-plane node never counts as a domain.
+# The api/memcache/standalone components are unpinned and memory-shaped
+# (from colo-mix) so $/GiB decides their packing and the reserved-priced
+# r5.2xlarge pool is the prize; standalone's one-per-node rule fragments
+# greedy packers.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-web-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: web
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ web_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: web
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: web
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+{% if constrained %}
+        # One web per node; also guarantees headroom for pair co-location
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  bench-component: web
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Zone keyed affinity to web (optimiser AffinityGroup path) plus hostname
+# keyed self anti-affinity (current controller path) on the same pod
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-cache-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: cache
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ cache_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: cache
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: cache
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+{% if constrained %}
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  bench-component: web
+                  bench-run: "{{ run_id }}"
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  bench-component: cache
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Hostname keyed affinity: must share a node with a web pod
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-pair-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: pair
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ pair_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: pair
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: pair
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+{% if constrained %}
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  bench-component: web
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+# Zone keyed anti-affinity to db. Pinned to zones a/b so db always has a
+# zone free of batch pods and neither side can wedge the other.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-batch-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: batch
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ batch_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: batch
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: batch
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+                  - key: topology.kubernetes.io/zone
+                    operator: In
+                    values:
+                      - us-east-1a
+                      - us-east-1b
+{% if constrained %}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  bench-component: db
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+---
+# Zone keyed self affinity: all db pods must land in one zone
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-db-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: db
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ db_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: db
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: db
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m6i.large
+{% if constrained %}
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  bench-component: db
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1
+              memory: 2Gi
+            limits:
+              cpu: 1
+              memory: 2Gi
+---
+# CPU complement: soaks up the cpu that memcache leaves idle on memory nodes.
+# No inter-pod terms in either rendering.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-api-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: api
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ api_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: api
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: api
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1
+              memory: 4Gi
+            limits:
+              cpu: 1
+              memory: 4Gi
+---
+# Memory anchor at the r5 ratio (16 GiB/core): makes $/GiB the deciding
+# metric. No inter-pod terms in either rendering.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-memcache-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: memcache
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ memcache_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: memcache
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: memcache
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 8Gi
+            limits:
+              cpu: 500m
+              memory: 8Gi
+---
+# One per node when constrained: node-count floor at zero marginal cost for
+# the solver. 2 cpu / 16Gi deliberately doesn't fit any 2-vCPU instance, so
+# a stranded pod can't hide on a cheap small node.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-standalone-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: standalone
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ standalone_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: standalone
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: standalone
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+{% if constrained %}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  bench-component: standalone
+                  bench-run: "{{ run_id }}"
+{% endif %}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 2
+              memory: 16Gi
+            limits:
+              cpu: 2
+              memory: 16Gi
+---
+# Unconstrained background load on any pool
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-{{ profile }}-filler-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: {{ profile }}
+    bench-component: filler
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ filler_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: {{ profile }}
+      bench-component: filler
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: {{ profile }}
+        bench-component: filler
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

@@ -1,0 +1,158 @@
+# Heavy mixed workload: 30% small, 30% medium, 25% large, 15% xlarge
+# Tests bin-packing across all instance types including m5.xlarge
+# Rendered by Jinja2 with: small_replicas, medium_replicas, large_replicas, xlarge_replicas, run_id
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-hmixed-small-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: heavy-mixed
+    bench-component: small
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ small_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: heavy-mixed
+      bench-component: small
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: heavy-mixed
+        bench-component: small
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-hmixed-medium-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: heavy-mixed
+    bench-component: medium
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ medium_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: heavy-mixed
+      bench-component: medium
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: heavy-mixed
+        bench-component: medium
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-hmixed-large-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: heavy-mixed
+    bench-component: large
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ large_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: heavy-mixed
+      bench-component: large
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: heavy-mixed
+        bench-component: large
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-hmixed-xlarge-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: heavy-mixed
+    bench-component: xlarge
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ xlarge_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: heavy-mixed
+      bench-component: xlarge
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: heavy-mixed
+        bench-component: xlarge
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi

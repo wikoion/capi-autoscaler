@@ -1,0 +1,941 @@
+# AWS workload cluster for benchmarking (CAPA provider)
+# 3 MachineDeployments matching different EC2 instance types, all starting at 0 replicas
+# Apply with make: the Makefile fills in sshKeyName from AWS_SSH_KEY_NAME with envsubst
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: bench-cluster
+  namespace: default
+  labels:
+    cluster-name: bench-cluster
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+    services:
+      cidrBlocks:
+        - 10.128.0.0/12
+  controlPlaneRef:
+    apiGroup: controlplane.cluster.x-k8s.io
+    kind: KubeadmControlPlane
+    name: bench-cluster-control-plane
+  infrastructureRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: AWSCluster
+    name: bench-cluster
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSCluster
+metadata:
+  name: bench-cluster
+  namespace: default
+spec:
+  region: us-east-1
+  sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: KubeadmControlPlane
+metadata:
+  name: bench-cluster-control-plane
+  namespace: default
+spec:
+  replicas: 1
+  version: v1.35.7
+  machineTemplate:
+    spec:
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-control-plane
+  kubeadmConfigSpec:
+    files:
+      # MostAllocated scoring: pack pods onto loaded nodes so empty large nodes
+      # stay free for constrained pods, matching the solver's bin-packing plans.
+      - path: /etc/kubernetes/scheduler-config.yaml
+        owner: root:root
+        permissions: "0644"
+        content: |
+          apiVersion: kubescheduler.config.k8s.io/v1
+          kind: KubeSchedulerConfiguration
+          clientConnection:
+            kubeconfig: /etc/kubernetes/scheduler.conf
+          profiles:
+            - schedulerName: default-scheduler
+              pluginConfig:
+                - name: NodeResourcesFit
+                  args:
+                    scoringStrategy:
+                      type: MostAllocated
+                      resources:
+                        - name: cpu
+                          weight: 1
+                        - name: memory
+                          weight: 1
+    clusterConfiguration:
+      apiServer:
+        extraArgs:
+          # No cloud-provider flag: removed from the apiserver by 1.35,
+          # external CCM is the only mode (controllerManager/kubelet keep theirs)
+          # MutatingAdmissionPolicy is beta in 1.35, off by default
+          - name: feature-gates
+            value: MutatingAdmissionPolicy=true
+          - name: runtime-config
+            value: admissionregistration.k8s.io/v1beta1=true
+      controllerManager:
+        extraArgs:
+          - name: cloud-provider
+            value: external
+      scheduler:
+        extraArgs:
+          - name: config
+            value: /etc/kubernetes/scheduler-config.yaml
+        extraVolumes:
+          - name: scheduler-config
+            hostPath: /etc/kubernetes/scheduler-config.yaml
+            mountPath: /etc/kubernetes/scheduler-config.yaml
+            readOnly: true
+            pathType: File
+    initConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          - name: cloud-provider
+            value: external
+        name: '{{ ds.meta_data.local_hostname }}'
+    joinConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          - name: cloud-provider
+            value: external
+        name: '{{ ds.meta_data.local_hostname }}'
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-control-plane
+  namespace: default
+spec:
+  template:
+    spec:
+      instanceType: t3.medium
+      iamInstanceProfile: control-plane.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+      # 8GiB default filled after ~9 weeks and DiskPressure evicted the CCM
+      rootVolume:
+        size: 40
+---
+# Worker pool "small" - t3.medium (2 vCPU / 4 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-small
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "10"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "4Gi"
+    wikoion.dev/cost-per-hour: "0.0416"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=t3.medium"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: small
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-small
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-small
+  namespace: default
+  labels:
+    node-pool: small
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "4Gi"
+spec:
+  template:
+    spec:
+      instanceType: t3.medium
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "medium" - m5.large (2 vCPU / 8 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-medium
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "10"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+    wikoion.dev/cost-per-hour: "0.096"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m5.large"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: medium
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-medium
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-medium
+  namespace: default
+  labels:
+    node-pool: medium
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+spec:
+  template:
+    spec:
+      instanceType: m5.large
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "large" - m5.xlarge (4 vCPU / 16 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-large
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "10"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+    wikoion.dev/cost-per-hour: "0.192"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m5.xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: large
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-large
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-large
+  namespace: default
+  labels:
+    node-pool: large
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+spec:
+  template:
+    spec:
+      instanceType: m5.xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Shared bootstrap config for all workers
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: KubeadmConfigTemplate
+metadata:
+  name: bench-cluster-workers
+  namespace: default
+spec:
+  template:
+    spec:
+      joinConfiguration:
+        nodeRegistration:
+          kubeletExtraArgs:
+            - name: cloud-provider
+              value: external
+          name: '{{ ds.meta_data.local_hostname }}'
+---
+# Worker pool "general-xl" - m5.2xlarge (8 vCPU / 32 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-general-xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "8"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+    wikoion.dev/cost-per-hour: "0.384"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m5.2xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: general-xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-general-xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-general-xl
+  namespace: default
+  labels:
+    node-pool: general-xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+spec:
+  template:
+    spec:
+      instanceType: m5.2xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "general-4xl" - m5.4xlarge (16 vCPU / 64 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-general-4xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "8"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "64Gi"
+    wikoion.dev/cost-per-hour: "0.768"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m5.4xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: general-4xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-general-4xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-general-4xl
+  namespace: default
+  labels:
+    node-pool: general-4xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "64Gi"
+spec:
+  template:
+    spec:
+      instanceType: m5.4xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "compute-l" - c5.xlarge (4 vCPU / 8 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-compute-l
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "10"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+    wikoion.dev/cost-per-hour: "0.17"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=c5.xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: compute-l
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-compute-l
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-compute-l
+  namespace: default
+  labels:
+    node-pool: compute-l
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+spec:
+  template:
+    spec:
+      instanceType: c5.xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "compute-xl" - c5.2xlarge (8 vCPU / 16 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-compute-xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "8"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+    wikoion.dev/cost-per-hour: "0.34"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=c5.2xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: compute-xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-compute-xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-compute-xl
+  namespace: default
+  labels:
+    node-pool: compute-xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+spec:
+  template:
+    spec:
+      instanceType: c5.2xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "compute-4xl" - c5.4xlarge (16 vCPU / 32 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-compute-4xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "4"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+    wikoion.dev/cost-per-hour: "0.68"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=c5.4xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: compute-4xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-compute-4xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-compute-4xl
+  namespace: default
+  labels:
+    node-pool: compute-4xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+spec:
+  template:
+    spec:
+      instanceType: c5.4xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "memory-m" - r5.large (2 vCPU / 16 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-memory-m
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "10"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+    wikoion.dev/cost-per-hour: "0.126"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=r5.large"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: memory-m
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-memory-m
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-memory-m
+  namespace: default
+  labels:
+    node-pool: memory-m
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "16Gi"
+spec:
+  template:
+    spec:
+      instanceType: r5.large
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "memory-l" - r5.xlarge (4 vCPU / 32 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-memory-l
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "8"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+    wikoion.dev/cost-per-hour: "0.252"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=r5.xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: memory-l
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-memory-l
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-memory-l
+  namespace: default
+  labels:
+    node-pool: memory-l
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "4"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "32Gi"
+spec:
+  template:
+    spec:
+      instanceType: r5.xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "memory-xl" - r5.2xlarge (8 vCPU / 64 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-memory-xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "15"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "64Gi"
+    # Discounted benchmark price; public on-demand is 0.504 (see cost-mix profile)
+    wikoion.dev/cost-per-hour: "0.277"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=r5.2xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: memory-xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-memory-xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-memory-xl
+  namespace: default
+  labels:
+    node-pool: memory-xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "8"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "64Gi"
+spec:
+  template:
+    spec:
+      instanceType: r5.2xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pool "memory-4xl" - r5.4xlarge (16 vCPU / 128 GiB)
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-memory-4xl
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "8"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "128Gi"
+    wikoion.dev/cost-per-hour: "1.008"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=r5.4xlarge"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: memory-4xl
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-memory-4xl
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-memory-4xl
+  namespace: default
+  labels:
+    node-pool: memory-4xl
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "16"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "128Gi"
+spec:
+  template:
+    spec:
+      instanceType: r5.4xlarge
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Worker pools "zone-a/b/c" - m6i.large (2 vCPU / 8 GiB), one pool per AZ.
+# The topology.kubernetes.io/zone MD label gives new-node slots their zone
+# domain; failureDomain places machines in the matching subnet.
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-zone-a
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "15"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+    wikoion.dev/cost-per-hour: "0.096"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m6i.large,topology.kubernetes.io/zone=us-east-1a"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: zone-a
+    topology.kubernetes.io/zone: us-east-1a
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      failureDomain: us-east-1a
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-zoned
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-zone-b
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "15"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+    wikoion.dev/cost-per-hour: "0.096"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m6i.large,topology.kubernetes.io/zone=us-east-1b"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: zone-b
+    topology.kubernetes.io/zone: us-east-1b
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      failureDomain: us-east-1b
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-zoned
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: bench-cluster-workers-zone-c
+  namespace: default
+  annotations:
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size: "0"
+    cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size: "15"
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+    wikoion.dev/cost-per-hour: "0.096"
+    capacity.cluster-autoscaler.kubernetes.io/labels: "kubernetes.io/os=linux,node.kubernetes.io/instance-type=m6i.large,topology.kubernetes.io/zone=us-east-1c"
+  labels:
+    cluster.x-k8s.io/cluster-name: bench-cluster
+    wikoion.dev/cluster-id: bench-cluster
+    node-pool: zone-c
+    topology.kubernetes.io/zone: us-east-1c
+spec:
+  clusterName: bench-cluster
+  replicas: 0
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: bench-cluster
+      version: v1.35.7
+      failureDomain: us-east-1c
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: bench-cluster-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: bench-cluster-workers-zoned
+---
+# Shared by all three zoned pools; the AZ comes from each MD's failureDomain
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: bench-cluster-workers-zoned
+  namespace: default
+  labels:
+    node-pool: zoned
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: "8Gi"
+spec:
+  template:
+    spec:
+      instanceType: m6i.large
+      iamInstanceProfile: nodes.cluster-api-provider-aws.sigs.k8s.io
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+---
+# Remediate machines that never become nodes (e.g. AWS capacity shortfalls):
+# without this, stuck machines hold MachineDeployment spec above actual node
+# count indefinitely and stall the autoscaler's provisioning accounting.
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineHealthCheck
+metadata:
+  name: bench-cluster-workers-mhc
+  namespace: default
+spec:
+  clusterName: bench-cluster
+  selector:
+    matchExpressions:
+      - key: cluster.x-k8s.io/control-plane
+        operator: DoesNotExist
+  checks:
+    # Generous timeouts: calico's BGP mesh can take several minutes to
+    # converge when many nodes join at once; remediating at 300s deletes
+    # healthy-but-slow nodes en masse and restarts the join storm.
+    nodeStartupTimeoutSeconds: 900
+    unhealthyNodeConditions:
+      - type: Ready
+        status: "False"
+        timeoutSeconds: 900
+      - type: Ready
+        status: Unknown
+        timeoutSeconds: 900
+  remediation:
+    triggerIf:
+      unhealthyLessThanOrEqualTo: 100%

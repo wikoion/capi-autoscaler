@@ -1,0 +1,37 @@
+# Large workload pods: 1 CPU / 1Gi memory
+# Rendered by Jinja2 with: replicas, run_id
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-large-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: large
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: large
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: large
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi

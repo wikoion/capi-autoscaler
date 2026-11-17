@@ -1,0 +1,25 @@
+/optimiser/target
+/autoscaler/target
+/cp_sat/target
+/benchmarks/solver-bench/target
+/target
+/autoscaler/.tiltbuild
+
+# Benchmark results (generated CSV files)
+/benchmarks/results/*.csv
+
+# Python caches and build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+/benchmarks/harness/.venv
+/benchmarks/analysis/.venv
+/benchmarks/analysis/exports
+/benchmarks/analysis/.ipynb_checkpoints
+
+# Core dumps
+core.*
+
+
+.claude
+/benchmarks/solver-bench/target

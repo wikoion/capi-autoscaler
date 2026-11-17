@@ -1,0 +1,58 @@
+# Karpenter NodePool and EC2NodeClass for benchmarking
+# Instance types match the CAPA worker pools for fair comparison
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: bench-pool
+spec:
+  template:
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - t3.medium
+            - m5.large
+            - m5.xlarge
+            - m5.2xlarge
+            - m5.4xlarge
+            - m6i.large
+            - c5.xlarge
+            - c5.2xlarge
+            - c5.4xlarge
+            - r5.large
+            - r5.xlarge
+            - r5.2xlarge
+            - r5.4xlarge
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: bench-class
+  limits:
+    cpu: "400"
+    memory: 2000Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: bench-class
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: bench-karpenter
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: bench-karpenter
+  role: "KarpenterNodeRole-bench-karpenter"

@@ -1,0 +1,537 @@
+# Production-mix workload: 13 pod shapes spanning cpu-heavy, memory-heavy,
+# non-round, and very large (4xlarge-only) sizes, plus an affinity-constrained
+# service restricted to specific instance types via required node affinity.
+# Exercises cost-aware bin-packing across heterogeneous instance families.
+# Rendered by Jinja2 with: <component>_replicas for each component, run_id
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-tiny-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: tiny
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ tiny_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: tiny
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: tiny
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-small-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: small
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ small_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: small
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: small
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-web-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: web
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ web_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: web
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: web
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-api-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: api
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ api_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: api
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: api
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1
+              memory: 2Gi
+            limits:
+              cpu: 1
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-worker-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: worker
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ worker_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: worker
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: worker
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 2
+              memory: 2Gi
+            limits:
+              cpu: 2
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-batch-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: batch
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ batch_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: batch
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: batch
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 4
+              memory: 4Gi
+            limits:
+              cpu: 4
+              memory: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-cache-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: cache
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ cache_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: cache
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: cache
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 500m
+              memory: 6Gi
+            limits:
+              cpu: 500m
+              memory: 6Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-jvm-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: jvm
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ jvm_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: jvm
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: jvm
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 2
+              memory: 12Gi
+            limits:
+              cpu: 2
+              memory: 12Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-odd-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: odd
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ odd_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: odd
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: odd
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1300m
+              memory: 3800Mi
+            limits:
+              cpu: 1300m
+              memory: 3800Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-xxl-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: xxl
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ xxl_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: xxl
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: xxl
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 8
+              memory: 32Gi
+            limits:
+              cpu: 8
+              memory: 32Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-giant-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: giant
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ giant_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: giant
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: giant
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 12
+              memory: 48Gi
+            limits:
+              cpu: 12
+              memory: 48Gi
+---
+# Affinity-constrained service: must land on a compute-optimised node
+# (but not the 4xl) OR a mid-tier memory-optimised node. Exercises multiple
+# OR'd nodeSelectorTerms, AND'd matchExpressions, and In/NotIn operators —
+# including at scale-from-zero, where the autoscaler only knows the expected
+# labels from the MachineDeployment annotations.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-affinity-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: affinity
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ affinity_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: affinity
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: affinity
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - c5.xlarge
+                      - c5.2xlarge
+                      - c5.4xlarge
+                  - key: node.kubernetes.io/instance-type
+                    operator: NotIn
+                    values:
+                      - c5.4xlarge
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - r5.xlarge
+                      - r5.2xlarge
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1200m
+              memory: 2Gi
+            limits:
+              cpu: 1200m
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-pmix-memgiant-{{ run_id }}
+  namespace: benchmark-workload
+  labels:
+    app: benchmark-workload
+    bench-profile: prod-mix
+    bench-component: memgiant
+    bench-run: "{{ run_id }}"
+spec:
+  replicas: {{ memgiant_replicas }}
+  selector:
+    matchLabels:
+      app: benchmark-workload
+      bench-profile: prod-mix
+      bench-component: memgiant
+      bench-run: "{{ run_id }}"
+  template:
+    metadata:
+      labels:
+        app: benchmark-workload
+        wikoion.dev/placement: managed
+        bench-profile: prod-mix
+        bench-component: memgiant
+        bench-run: "{{ run_id }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 8
+              memory: 96Gi
+            limits:
+              cpu: 8
+              memory: 96Gi
